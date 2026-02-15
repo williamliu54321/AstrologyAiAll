@@ -1,50 +1,37 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { OPENAI_API_KEY } from './config.js';
 
 const container = document.getElementById('avatar-container');
 const textInput = document.getElementById('text-input');
 const speakBtn = document.getElementById('speak-btn');
+const listenBtn = document.getElementById('listen-btn');
+const statusEl = document.getElementById('status');
 
 let scene, camera, renderer, avatar, mixer;
 let morphTargetMeshes = [];
 let isSpeaking = false;
+let isListening = false;
+let recognition = null;
 
-// Viseme mapping for lip sync
-const visemeMap = {
-    'viseme_sil': 0,    // silence
-    'viseme_PP': 0,     // p, b, m
-    'viseme_FF': 0,     // f, v
-    'viseme_TH': 0,     // th
-    'viseme_DD': 0,     // t, d
-    'viseme_kk': 0,     // k, g
-    'viseme_CH': 0,     // ch, j, sh
-    'viseme_SS': 0,     // s, z
-    'viseme_nn': 0,     // n, l
-    'viseme_RR': 0,     // r
-    'viseme_aa': 0,     // a
-    'viseme_E': 0,      // e
-    'viseme_I': 0,      // i
-    'viseme_O': 0,      // o
-    'viseme_U': 0,      // u
-};
+// Conversation history for context
+let conversationHistory = [
+    { role: 'system', content: 'You are a mystical astrology AI assistant. You provide insights about zodiac signs, horoscopes, planetary alignments, and spiritual guidance. Keep responses concise (2-3 sentences) and mystical in tone.' }
+];
 
 function init() {
-    // Scene
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0f0f1a);
 
-    // Camera
     camera = new THREE.PerspectiveCamera(30, container.clientWidth / container.clientHeight, 0.1, 1000);
     camera.position.set(0, 1.6, 1.5);
 
-    // Renderer
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
     container.appendChild(renderer.domElement);
 
-    // Lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
 
@@ -56,22 +43,18 @@ function init() {
     fillLight.position.set(-1, 1, -1);
     scene.add(fillLight);
 
-    // Controls
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.set(0, 1.5, 0);
     controls.enablePan = false;
     controls.update();
 
-    // Load Avatar
     loadAvatar();
-
-    // Animation loop
+    setupSpeechRecognition();
     animate();
 }
 
 function loadAvatar() {
     const loader = new GLTFLoader();
-
     const avatarUrl = 'https://models.readyplayer.me/64bfa15f0e72c63d7c3934a6.glb?morphTargets=ARKit,Oculus+Visemes,mouthOpen,mouthSmile,eyesClosed,eyesLookUp,eyesLookDown&textureSizeLimit=1024&textureFormat=png';
 
     loader.load(
@@ -81,26 +64,179 @@ function loadAvatar() {
             avatar.position.set(0, 0, 0);
             scene.add(avatar);
 
-            // Find meshes with morph targets (for lip sync)
             avatar.traverse((child) => {
                 if (child.isMesh && child.morphTargetInfluences && child.morphTargetDictionary) {
                     morphTargetMeshes.push(child);
-                    console.log('Found morph targets:', Object.keys(child.morphTargetDictionary));
                 }
             });
 
-            console.log('Avatar loaded with', morphTargetMeshes.length, 'morph target meshes');
+            setStatus('Ready! Click "Listen" to speak.');
         },
         (progress) => {
-            console.log('Loading:', (progress.loaded / progress.total * 100).toFixed(0) + '%');
+            setStatus('Loading avatar: ' + (progress.loaded / progress.total * 100).toFixed(0) + '%');
         },
         (error) => {
             console.error('Error loading avatar:', error);
+            setStatus('Error loading avatar');
         }
     );
 }
 
-// Set a morph target value on all meshes
+function setupSpeechRecognition() {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        setStatus('Speech recognition not supported in this browser');
+        listenBtn.disabled = true;
+        return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onstart = () => {
+        isListening = true;
+        listenBtn.textContent = '🎤 Listening...';
+        listenBtn.classList.add('listening');
+        setStatus('Listening...');
+    };
+
+    recognition.onresult = (event) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            transcript += event.results[i][0].transcript;
+        }
+        textInput.value = transcript;
+
+        if (event.results[event.results.length - 1].isFinal) {
+            stopListening();
+            processUserInput(transcript);
+        }
+    };
+
+    recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setStatus('Error: ' + event.error);
+        stopListening();
+    };
+
+    recognition.onend = () => {
+        stopListening();
+    };
+}
+
+function startListening() {
+    if (recognition && !isListening && !isSpeaking) {
+        recognition.start();
+    }
+}
+
+function stopListening() {
+    isListening = false;
+    listenBtn.textContent = '🎤 Listen';
+    listenBtn.classList.remove('listening');
+    if (recognition) {
+        try { recognition.stop(); } catch (e) {}
+    }
+}
+
+async function processUserInput(userText) {
+    if (!userText.trim()) return;
+
+    setStatus('Thinking...');
+
+    // Add user message to history
+    conversationHistory.push({ role: 'user', content: userText });
+
+    try {
+        // Get GPT response
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: 'gpt-4o-mini',
+                messages: conversationHistory,
+                max_tokens: 150
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            throw new Error(data.error.message);
+        }
+
+        const assistantMessage = data.choices[0].message.content;
+        conversationHistory.push({ role: 'assistant', content: assistantMessage });
+
+        // Speak the response with OpenAI TTS
+        await speakWithOpenAI(assistantMessage);
+
+    } catch (error) {
+        console.error('Error:', error);
+        setStatus('Error: ' + error.message);
+    }
+}
+
+async function speakWithOpenAI(text) {
+    setStatus('Speaking...');
+
+    try {
+        const response = await fetch('https://api.openai.com/v1/audio/speech', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: 'tts-1',
+                input: text,
+                voice: 'nova' // Options: alloy, echo, fable, onyx, nova, shimmer
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('TTS request failed');
+        }
+
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+
+        audio.onplay = () => {
+            startTalking();
+        };
+
+        audio.onended = () => {
+            stopTalking();
+            setStatus('Ready! Click "Listen" to speak.');
+            URL.revokeObjectURL(audioUrl);
+        };
+
+        audio.play();
+
+    } catch (error) {
+        console.error('TTS Error:', error);
+        // Fallback to browser TTS
+        speakWithBrowser(text);
+    }
+}
+
+function speakWithBrowser(text) {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.9;
+    utterance.onstart = () => startTalking();
+    utterance.onend = () => {
+        stopTalking();
+        setStatus('Ready! Click "Listen" to speak.');
+    };
+    speechSynthesis.speak(utterance);
+}
+
 function setMorphTarget(name, value) {
     morphTargetMeshes.forEach(mesh => {
         const index = mesh.morphTargetDictionary[name];
@@ -110,41 +246,32 @@ function setMorphTarget(name, value) {
     });
 }
 
-// Animate mouth for talking
 let talkingAnimation = null;
 
 function startTalking() {
     isSpeaking = true;
-
-    // Visemes to cycle through for talking effect
     const talkingVisemes = ['viseme_aa', 'viseme_O', 'viseme_E', 'viseme_I', 'viseme_U', 'viseme_sil'];
     let visemeIndex = 0;
     let lastTime = 0;
-    const speed = 100; // ms per viseme
+    const speed = 100;
 
     function animateMouth(time) {
         if (!isSpeaking) {
-            // Reset mouth
             talkingVisemes.forEach(v => setMorphTarget(v, 0));
             setMorphTarget('mouthOpen', 0);
             return;
         }
 
         if (time - lastTime > speed) {
-            // Reset previous viseme
             talkingVisemes.forEach(v => setMorphTarget(v, 0));
-
-            // Set current viseme with some randomness for natural look
             const currentViseme = talkingVisemes[visemeIndex];
             const intensity = 0.3 + Math.random() * 0.5;
             setMorphTarget(currentViseme, intensity);
             setMorphTarget('mouthOpen', intensity * 0.7);
-
             visemeIndex = (visemeIndex + 1) % talkingVisemes.length;
             lastTime = time;
         }
 
-        // Subtle head movement while talking
         if (avatar) {
             avatar.rotation.y = Math.sin(time * 0.002) * 0.08;
             avatar.rotation.x = Math.sin(time * 0.003) * 0.03;
@@ -161,19 +288,16 @@ function stopTalking() {
     if (talkingAnimation) {
         cancelAnimationFrame(talkingAnimation);
     }
-    // Reset all mouth shapes
-    Object.keys(visemeMap).forEach(v => setMorphTarget(v, 0));
+    ['viseme_aa', 'viseme_O', 'viseme_E', 'viseme_I', 'viseme_U', 'viseme_sil'].forEach(v => setMorphTarget(v, 0));
     setMorphTarget('mouthOpen', 0);
 }
 
 function animate() {
     requestAnimationFrame(animate);
 
-    // Subtle idle animation when not speaking
     if (avatar && !isSpeaking) {
         avatar.rotation.y = Math.sin(Date.now() * 0.001) * 0.03;
 
-        // Blink occasionally
         if (Math.random() < 0.005) {
             setMorphTarget('eyesClosed', 1);
             setTimeout(() => setMorphTarget('eyesClosed', 0), 150);
@@ -183,41 +307,23 @@ function animate() {
     renderer.render(scene, camera);
 }
 
-// Text-to-speech with lip sync
-function speak(text) {
-    if (!text || !('speechSynthesis' in window)) {
-        console.error('Speech synthesis not available');
-        return;
-    }
-
-    // Cancel any ongoing speech
-    speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
-
-    utterance.onstart = () => {
-        console.log('Speaking:', text);
-        startTalking();
-    };
-
-    utterance.onend = () => {
-        console.log('Finished speaking');
-        stopTalking();
-    };
-
-    utterance.onerror = () => {
-        stopTalking();
-    };
-
-    speechSynthesis.speak(utterance);
+function setStatus(text) {
+    if (statusEl) statusEl.textContent = text;
+    console.log('Status:', text);
 }
 
 // Event listeners
 speakBtn.addEventListener('click', () => {
     const text = textInput.value.trim();
-    if (text) speak(text);
+    if (text) processUserInput(text);
+});
+
+listenBtn.addEventListener('click', () => {
+    if (isListening) {
+        stopListening();
+    } else {
+        startListening();
+    }
 });
 
 textInput.addEventListener('keydown', (e) => {
@@ -233,5 +339,4 @@ window.addEventListener('resize', () => {
     renderer.setSize(container.clientWidth, container.clientHeight);
 });
 
-// Start
 init();
