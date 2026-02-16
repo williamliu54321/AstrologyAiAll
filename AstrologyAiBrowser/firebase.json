@@ -1,0 +1,15 @@
+{
+  "hosting": {
+    "site": "fortuneai-app",
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "config.js",
+      "functions/**"
+    ]
+  },
+  "functions": {
+    "source": "functions"
+  }
+}

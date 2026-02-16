@@ -3,25 +3,210 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Astrology AI</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Astrology AI - Your Personal Cosmic Guide</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0a0a1a 0%, #1a1a3a 50%, #0a0a1a 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .stars {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            background-image:
+                radial-gradient(2px 2px at 20px 30px, #ffffff, transparent),
+                radial-gradient(2px 2px at 40px 70px, #ffffff, transparent),
+                radial-gradient(1px 1px at 90px 40px, #ffffff, transparent),
+                radial-gradient(2px 2px at 160px 120px, #ffffff, transparent),
+                radial-gradient(1px 1px at 230px 80px, #ffffff, transparent),
+                radial-gradient(2px 2px at 300px 150px, #ffffff, transparent),
+                radial-gradient(1px 1px at 370px 50px, #ffffff, transparent),
+                radial-gradient(2px 2px at 450px 180px, #ffffff, transparent),
+                radial-gradient(1px 1px at 520px 90px, #ffffff, transparent),
+                radial-gradient(2px 2px at 600px 200px, #ffffff, transparent),
+                radial-gradient(1px 1px at 680px 60px, #ffffff, transparent),
+                radial-gradient(2px 2px at 750px 140px, #ffffff, transparent),
+                radial-gradient(1px 1px at 100px 200px, #9999ff, transparent),
+                radial-gradient(2px 2px at 200px 300px, #9999ff, transparent),
+                radial-gradient(1px 1px at 350px 250px, #ff99ff, transparent),
+                radial-gradient(2px 2px at 500px 350px, #99ffff, transparent),
+                radial-gradient(1px 1px at 650px 280px, #9999ff, transparent);
+            background-size: 100% 100%;
+            animation: twinkle 5s ease-in-out infinite;
+        }
+
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.7; }
+            50% { opacity: 1; }
+        }
+
+        .container {
+            text-align: center;
+            z-index: 1;
+            padding: 40px;
+            max-width: 600px;
+        }
+
+        .logo {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 15px;
+            background: linear-gradient(135deg, #a78bfa, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .tagline {
+            font-size: 1.3rem;
+            color: #a0a0cc;
+            margin-bottom: 40px;
+            line-height: 1.6;
+        }
+
+        .features {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 50px;
+            flex-wrap: wrap;
+        }
+
+        .feature {
+            text-align: center;
+            padding: 20px;
+        }
+
+        .feature-icon {
+            font-size: 36px;
+            margin-bottom: 10px;
+        }
+
+        .feature-text {
+            color: #b0b0d0;
+            font-size: 0.95rem;
+        }
+
+        .cta-button {
+            display: inline-block;
+            padding: 18px 50px;
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: white;
+            background: linear-gradient(135deg, #7c3aed, #a78bfa);
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 30px rgba(124, 58, 237, 0.4);
+        }
+
+        .cta-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 12px 40px rgba(124, 58, 237, 0.6);
+        }
+
+        .cta-button:active {
+            transform: translateY(0);
+        }
+
+        .glow-orb {
+            position: absolute;
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(124, 58, 237, 0.3) 0%, transparent 70%);
+            filter: blur(40px);
+            animation: float 6s ease-in-out infinite;
+        }
+
+        .glow-orb.left {
+            left: -100px;
+            top: 20%;
+        }
+
+        .glow-orb.right {
+            right: -100px;
+            bottom: 20%;
+            animation-delay: -3s;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+        }
+
+        .footer {
+            position: absolute;
+            bottom: 20px;
+            color: #6060a0;
+            font-size: 0.85rem;
+        }
+
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 2rem;
+            }
+            .tagline {
+                font-size: 1rem;
+            }
+            .features {
+                gap: 15px;
+            }
+        }
+    </style>
 </head>
 <body>
-    <div id="container">
-        <div id="avatar-container"></div>
-        <div id="status">Loading...</div>
-        <div id="subtitles"></div>
-        <button id="start-btn">Start Conversation</button>
+    <div class="stars"></div>
+    <div class="glow-orb left"></div>
+    <div class="glow-orb right"></div>
+
+    <div class="container">
+        <div class="logo">🔮</div>
+        <h1>Astrology AI</h1>
+        <p class="tagline">Your personal cosmic guide powered by AI. Discover your horoscope, explore compatibility, and unlock insights from the stars.</p>
+
+        <div class="features">
+            <div class="feature">
+                <div class="feature-icon">⭐</div>
+                <div class="feature-text">Daily Horoscopes</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">💜</div>
+                <div class="feature-text">Love Compatibility</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🌙</div>
+                <div class="feature-text">Cosmic Guidance</div>
+            </div>
+        </div>
+
+        <a href="app.html" class="cta-button">Get Started</a>
     </div>
 
-    <script type="importmap">
-    {
-        "imports": {
-            "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
-        }
-    }
-    </script>
-    <script type="module" src="main.js"></script>
+    <div class="footer">Speak with your AI astrology guide</div>
 </body>
 </html>

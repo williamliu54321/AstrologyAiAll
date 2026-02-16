@@ -1,7 +1,18 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { OPENAI_API_KEY } from './config.js';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
+import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js';
+
+// Firebase config
+const firebaseConfig = {
+    projectId: "demosite2025"
+};
+
+const app = initializeApp(firebaseConfig);
+const functions = getFunctions(app);
+const chatFunction = httpsCallable(functions, 'chat');
+const ttsFunction = httpsCallable(functions, 'tts');
 
 const container = document.getElementById('avatar-container');
 const statusEl = document.getElementById('status');
@@ -22,7 +33,6 @@ let typewriterInterval = null;
 let conversationActive = false;
 let clock = new THREE.Clock();
 
-// Mystical objects
 let crystalBall, crystalBallGlow;
 let candleLights = [];
 
@@ -35,8 +45,6 @@ let conversationHistory = [
 function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0a12);
-
-    // Add fog for mystical atmosphere
     scene.fog = new THREE.FogExp2(0x0a0a12, 0.3);
 
     camera = new THREE.PerspectiveCamera(30, container.clientWidth / container.clientHeight, 0.1, 1000);
@@ -49,21 +57,17 @@ function init() {
     renderer.toneMappingExposure = 1.2;
     container.appendChild(renderer.domElement);
 
-    // Ambient light - dim for mystical feel
     const ambientLight = new THREE.AmbientLight(0x4444aa, 0.3);
     scene.add(ambientLight);
 
-    // Main light - purple tinted
     const mainLight = new THREE.DirectionalLight(0xaa88ff, 0.8);
     mainLight.position.set(1, 2, 2);
     scene.add(mainLight);
 
-    // Fill light - blue
     const fillLight = new THREE.DirectionalLight(0x4466ff, 0.3);
     fillLight.position.set(-1, 1, -1);
     scene.add(fillLight);
 
-    // Rim light - cyan
     const rimLight = new THREE.DirectionalLight(0x00ffff, 0.4);
     rimLight.position.set(0, 1, -2);
     scene.add(rimLight);
@@ -81,7 +85,6 @@ function init() {
 }
 
 function createTable() {
-    // Round table top
     const tableTopGeometry = new THREE.CylinderGeometry(0.35, 0.35, 0.04, 32);
     const tableMaterial = new THREE.MeshStandardMaterial({
         color: 0x1a0a1a,
@@ -92,7 +95,6 @@ function createTable() {
     tableTop.position.set(0, 1.05, 0.4);
     scene.add(tableTop);
 
-    // Table pedestal
     const pedestalGeometry = new THREE.CylinderGeometry(0.08, 0.15, 0.4, 16);
     const pedestal = new THREE.Mesh(pedestalGeometry, tableMaterial);
     pedestal.position.set(0, 0.83, 0.4);
@@ -100,7 +102,6 @@ function createTable() {
 }
 
 function createCrystalBall() {
-    // Crystal ball base/stand
     const standGeometry = new THREE.CylinderGeometry(0.08, 0.12, 0.05, 16);
     const standMaterial = new THREE.MeshStandardMaterial({
         color: 0x2a1a0a,
@@ -111,7 +112,6 @@ function createCrystalBall() {
     stand.position.set(0, 1.15, 0.4);
     scene.add(stand);
 
-    // Crystal ball
     const ballGeometry = new THREE.SphereGeometry(0.1, 32, 32);
     const ballMaterial = new THREE.MeshPhysicalMaterial({
         color: 0x8888ff,
@@ -128,7 +128,6 @@ function createCrystalBall() {
     crystalBall.position.set(0, 1.27, 0.4);
     scene.add(crystalBall);
 
-    // Inner glow
     const glowGeometry = new THREE.SphereGeometry(0.07, 16, 16);
     const glowMaterial = new THREE.MeshBasicMaterial({
         color: 0x9966ff,
@@ -139,14 +138,12 @@ function createCrystalBall() {
     crystalBallGlow.position.copy(crystalBall.position);
     scene.add(crystalBallGlow);
 
-    // Point light from crystal ball
     const crystalLight = new THREE.PointLight(0x9966ff, 0.8, 2);
     crystalLight.position.copy(crystalBall.position);
     scene.add(crystalLight);
 }
 
 function createCandleLights() {
-    // Create flickering point lights to simulate candles
     const candlePositions = [
         { x: -0.6, y: 1.5, z: 0.1 },
         { x: 0.6, y: 1.5, z: 0.1 },
@@ -171,7 +168,6 @@ function loadAvatar() {
             avatar.position.set(0, 0, 0);
             scene.add(avatar);
 
-            // Set up animation mixer
             mixer = new THREE.AnimationMixer(avatar);
 
             avatar.traverse((child) => {
@@ -179,19 +175,14 @@ function loadAvatar() {
                     morphTargetMeshes.push(child);
                 }
 
-                // Adjust arm bones for natural pose
                 if (child.isBone) {
                     const name = child.name.toLowerCase();
-
-                    // Rotate arms down
                     if (name.includes('leftarm') || name.includes('left_arm') || name === 'leftarm') {
-                        child.rotation.z = 1.1; // Rotate down
+                        child.rotation.z = 1.1;
                     }
                     if (name.includes('rightarm') || name.includes('right_arm') || name === 'rightarm') {
-                        child.rotation.z = -1.1; // Rotate down
+                        child.rotation.z = -1.1;
                     }
-
-                    // Bend forearms slightly
                     if (name.includes('leftforearm') || name.includes('left_forearm')) {
                         child.rotation.z = 0.3;
                     }
@@ -281,7 +272,7 @@ async function startConversation() {
     startBtn.classList.add('hidden');
 
     conversationHistory.push({ role: 'assistant', content: OPENING_MESSAGE });
-    await speakWithOpenAI(OPENING_MESSAGE);
+    await speakWithTTS(OPENING_MESSAGE);
 }
 
 function startListening() {
@@ -315,26 +306,11 @@ async function promptUser() {
     });
 
     try {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${OPENAI_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: 'gpt-4o-mini',
-                messages: conversationHistory,
-                max_tokens: 60
-            })
-        });
-
-        const data = await response.json();
-        if (data.error) throw new Error(data.error.message);
-
-        const promptMessage = data.choices[0].message.content;
+        const result = await chatFunction({ messages: conversationHistory });
+        const promptMessage = result.data.content;
         conversationHistory.push({ role: 'assistant', content: promptMessage });
 
-        await speakWithOpenAI(promptMessage);
+        await speakWithTTS(promptMessage);
     } catch (error) {
         console.error('Error:', error);
         setStatus('error', 'Error: ' + error.message);
@@ -353,26 +329,11 @@ async function processUserInput(userText) {
     conversationHistory.push({ role: 'user', content: userText });
 
     try {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${OPENAI_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: 'gpt-4o-mini',
-                messages: conversationHistory,
-                max_tokens: 60
-            })
-        });
-
-        const data = await response.json();
-        if (data.error) throw new Error(data.error.message);
-
-        const assistantMessage = data.choices[0].message.content;
+        const result = await chatFunction({ messages: conversationHistory });
+        const assistantMessage = result.data.content;
         conversationHistory.push({ role: 'assistant', content: assistantMessage });
 
-        await speakWithOpenAI(assistantMessage);
+        await speakWithTTS(assistantMessage);
     } catch (error) {
         console.error('Error:', error);
         setStatus('error', 'Error: ' + error.message);
@@ -380,35 +341,27 @@ async function processUserInput(userText) {
     }
 }
 
-async function speakWithOpenAI(text) {
+async function speakWithTTS(text) {
     setStatus('speaking', 'Speaking...');
     subtitlesEl.className = 'ai';
     subtitlesEl.textContent = '';
     isSpeaking = true;
 
     try {
-        const response = await fetch('https://api.openai.com/v1/audio/speech', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${OPENAI_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: 'tts-1-hd',
-                input: text,
-                voice: 'nova'
-            })
-        });
+        const result = await ttsFunction({ text: text });
+        const base64Audio = result.data.audio;
 
-        if (!response.ok) throw new Error('TTS request failed');
-
-        const audioBlob = await response.blob();
+        const binaryString = atob(base64Audio);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        const arrayBuffer = bytes.buffer;
 
         if (!audioContext) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
         }
 
-        const arrayBuffer = await audioBlob.arrayBuffer();
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
         const source = audioContext.createBufferSource();
@@ -515,36 +468,28 @@ function animate() {
     const delta = clock.getDelta();
     const time = clock.getElapsedTime();
 
-    // Update mixer for animations
     if (mixer) mixer.update(delta);
 
-    // Avatar idle animation
     if (avatar && !isSpeaking) {
         avatar.rotation.y = Math.sin(time * 0.5) * 0.05;
-
-        // Subtle breathing
         avatar.position.y = Math.sin(time * 2) * 0.003;
 
-        // Random blinking
         if (Math.random() < 0.005) {
             setMorphTarget('eyesClosed', 1);
             setTimeout(() => setMorphTarget('eyesClosed', 0), 150);
         }
     }
 
-    // Crystal ball pulsing glow
     if (crystalBallGlow) {
         const pulse = 0.5 + Math.sin(time * 2) * 0.2;
         crystalBallGlow.material.opacity = pulse;
         crystalBallGlow.scale.setScalar(0.9 + Math.sin(time * 3) * 0.1);
     }
 
-    // Rotate crystal ball slowly
     if (crystalBall) {
         crystalBall.rotation.y = time * 0.3;
     }
 
-    // Flickering candle lights
     candleLights.forEach((light, index) => {
         light.intensity = 0.3 + Math.random() * 0.2 + Math.sin(time * 10 + index) * 0.1;
     });
@@ -595,14 +540,5 @@ window.addEventListener('resize', () => {
 });
 
 startBtn.addEventListener('click', () => startConversation());
-
-// Press P to log camera position
-window.addEventListener('keydown', (e) => {
-    if (e.key === 'p' || e.key === 'P') {
-        console.log('Camera position:', camera.position);
-        console.log('Controls target:', controls.target);
-        alert(`Camera: ${camera.position.x.toFixed(2)}, ${camera.position.y.toFixed(2)}, ${camera.position.z.toFixed(2)}`);
-    }
-});
 
 init();
