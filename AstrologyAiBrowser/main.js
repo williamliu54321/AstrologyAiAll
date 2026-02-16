@@ -4,20 +4,22 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { OPENAI_API_KEY } from './config.js';
 
 const container = document.getElementById('avatar-container');
-const textInput = document.getElementById('text-input');
-const speakBtn = document.getElementById('speak-btn');
-const listenBtn = document.getElementById('listen-btn');
 const statusEl = document.getElementById('status');
+const subtitlesEl = document.getElementById('subtitles');
+const startBtn = document.getElementById('start-btn');
 
-let scene, camera, renderer, avatar, mixer;
+let scene, camera, renderer, avatar;
 let morphTargetMeshes = [];
 let isSpeaking = false;
 let isListening = false;
 let recognition = null;
+let currentTranscript = '';
+let silenceTimer = null;
+let typewriterInterval = null;
+let conversationActive = false;
 
-// Conversation history for context
 let conversationHistory = [
-    { role: 'system', content: 'You are a mystical astrology AI assistant. You provide insights about zodiac signs, horoscopes, planetary alignments, and spiritual guidance. Keep responses concise (2-3 sentences) and mystical in tone.' }
+    { role: 'system', content: 'You are a mystical astrology AI. Keep responses to 1-2 short sentences. Be concise.' }
 ];
 
 function init() {
@@ -49,7 +51,6 @@ function init() {
     controls.update();
 
     loadAvatar();
-    setupSpeechRecognition();
     animate();
 }
 
@@ -70,87 +71,90 @@ function loadAvatar() {
                 }
             });
 
-            setStatus('Ready! Click "Listen" to speak.');
+            setStatus('ready', 'Click to start');
         },
         (progress) => {
-            setStatus('Loading avatar: ' + (progress.loaded / progress.total * 100).toFixed(0) + '%');
+            setStatus('loading', 'Loading: ' + (progress.loaded / progress.total * 100).toFixed(0) + '%');
         },
         (error) => {
             console.error('Error loading avatar:', error);
-            setStatus('Error loading avatar');
+            setStatus('error', 'Error loading avatar');
         }
     );
 }
 
 function setupSpeechRecognition() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-        setStatus('Speech recognition not supported in this browser');
-        listenBtn.disabled = true;
+        setStatus('error', 'Speech recognition not supported');
         return;
     }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     recognition = new SpeechRecognition();
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
 
     recognition.onstart = () => {
         isListening = true;
-        listenBtn.textContent = '🎤 Listening...';
-        listenBtn.classList.add('listening');
-        setStatus('Listening...');
+        currentTranscript = '';
+        setStatus('listening', 'Listening...');
     };
 
     recognition.onresult = (event) => {
-        let transcript = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-            transcript += event.results[i][0].transcript;
+        // Clear silence timer on new speech
+        if (silenceTimer) {
+            clearTimeout(silenceTimer);
+            silenceTimer = null;
         }
-        textInput.value = transcript;
 
-        if (event.results[event.results.length - 1].isFinal) {
-            stopListening();
-            processUserInput(transcript);
+        let transcript = '';
+        let isFinal = false;
+
+        for (let i = 0; i < event.results.length; i++) {
+            transcript += event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+                isFinal = true;
+            }
         }
+
+        currentTranscript = transcript;
+        setSubtitle('user', transcript);
+
+        // Start silence timer - if no new speech for 2.5s, process
+        silenceTimer = setTimeout(() => {
+            if (currentTranscript.trim() && isListening) {
+                stopListening();
+                processUserInput(currentTranscript);
+            }
+        }, 2500);
     };
 
     recognition.onerror = (event) => {
         console.error('Speech recognition error:', event.error);
-        setStatus('Error: ' + event.error);
-        stopListening();
+        if (event.error === 'no-speech' && conversationActive) {
+            // Restart listening if no speech detected
+            setTimeout(startListening, 500);
+        }
     };
 
     recognition.onend = () => {
-        stopListening();
+        isListening = false;
+        // Auto-restart if conversation is active and we're not speaking
+        if (conversationActive && !isSpeaking) {
+            setTimeout(startListening, 300);
+        }
     };
 }
 
-function startListening() {
-    if (recognition && !isListening && !isSpeaking) {
-        recognition.start();
-    }
-}
+async function startConversation() {
+    conversationActive = true;
+    setupSpeechRecognition();
+    startBtn.classList.add('hidden');
 
-function stopListening() {
-    isListening = false;
-    listenBtn.textContent = '🎤 Listen';
-    listenBtn.classList.remove('listening');
-    if (recognition) {
-        try { recognition.stop(); } catch (e) {}
-    }
-}
-
-async function processUserInput(userText) {
-    if (!userText.trim()) return;
-
-    setStatus('Thinking...');
-
-    // Add user message to history
-    conversationHistory.push({ role: 'user', content: userText });
+    setStatus('thinking', 'Waking up...');
 
     try {
-        // Get GPT response
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -160,30 +164,88 @@ async function processUserInput(userText) {
             body: JSON.stringify({
                 model: 'gpt-4o-mini',
                 messages: conversationHistory,
-                max_tokens: 150
+                max_tokens: 60
             })
         });
 
         const data = await response.json();
+        if (data.error) throw new Error(data.error.message);
 
-        if (data.error) {
-            throw new Error(data.error.message);
+        const greeting = data.choices[0].message.content;
+        conversationHistory.push({ role: 'assistant', content: greeting });
+
+        await speakWithOpenAI(greeting);
+    } catch (error) {
+        console.error('Error:', error);
+        setStatus('error', 'Error: ' + error.message);
+    }
+}
+
+function startListening() {
+    if (recognition && !isListening && !isSpeaking && conversationActive) {
+        try {
+            currentTranscript = '';
+            recognition.start();
+        } catch (e) {
+            console.log('Recognition error:', e);
         }
+    }
+}
+
+function stopListening() {
+    if (silenceTimer) {
+        clearTimeout(silenceTimer);
+        silenceTimer = null;
+    }
+    isListening = false;
+    if (recognition) {
+        try { recognition.stop(); } catch (e) {}
+    }
+}
+
+async function processUserInput(userText) {
+    if (!userText.trim()) {
+        startListening();
+        return;
+    }
+
+    setStatus('thinking', 'Thinking...');
+
+    conversationHistory.push({ role: 'user', content: userText });
+
+    try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: 'gpt-4o-mini',
+                messages: conversationHistory,
+                max_tokens: 60
+            })
+        });
+
+        const data = await response.json();
+        if (data.error) throw new Error(data.error.message);
 
         const assistantMessage = data.choices[0].message.content;
         conversationHistory.push({ role: 'assistant', content: assistantMessage });
 
-        // Speak the response with OpenAI TTS
         await speakWithOpenAI(assistantMessage);
-
     } catch (error) {
         console.error('Error:', error);
-        setStatus('Error: ' + error.message);
+        setStatus('error', 'Error: ' + error.message);
+        setTimeout(startListening, 2000);
     }
 }
 
 async function speakWithOpenAI(text) {
-    setStatus('Speaking...');
+    setStatus('speaking', 'Speaking...');
+    subtitlesEl.className = 'ai';
+    subtitlesEl.textContent = '';
+    isSpeaking = true;
 
     try {
         const response = await fetch('https://api.openai.com/v1/audio/speech', {
@@ -195,13 +257,11 @@ async function speakWithOpenAI(text) {
             body: JSON.stringify({
                 model: 'tts-1',
                 input: text,
-                voice: 'nova' // Options: alloy, echo, fable, onyx, nova, shimmer
+                voice: 'nova'
             })
         });
 
-        if (!response.ok) {
-            throw new Error('TTS request failed');
-        }
+        if (!response.ok) throw new Error('TTS request failed');
 
         const audioBlob = await response.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
@@ -209,32 +269,34 @@ async function speakWithOpenAI(text) {
 
         audio.onplay = () => {
             startTalking();
+            startTypewriter(text, audio.duration);
         };
 
         audio.onended = () => {
             stopTalking();
-            setStatus('Ready! Click "Listen" to speak.');
+            stopTypewriter();
+            subtitlesEl.textContent = text;
+            isSpeaking = false;
             URL.revokeObjectURL(audioUrl);
+            // Auto-start listening after AI finishes
+            setTimeout(startListening, 500);
+        };
+
+        audio.onerror = () => {
+            stopTalking();
+            isSpeaking = false;
+            setStatus('error', 'Audio error');
+            setTimeout(startListening, 1000);
         };
 
         audio.play();
-
     } catch (error) {
         console.error('TTS Error:', error);
-        // Fallback to browser TTS
-        speakWithBrowser(text);
-    }
-}
-
-function speakWithBrowser(text) {
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.9;
-    utterance.onstart = () => startTalking();
-    utterance.onend = () => {
         stopTalking();
-        setStatus('Ready! Click "Listen" to speak.');
-    };
-    speechSynthesis.speak(utterance);
+        isSpeaking = false;
+        setStatus('error', 'TTS error');
+        setTimeout(startListening, 1000);
+    }
 }
 
 function setMorphTarget(name, value) {
@@ -249,7 +311,6 @@ function setMorphTarget(name, value) {
 let talkingAnimation = null;
 
 function startTalking() {
-    isSpeaking = true;
     const talkingVisemes = ['viseme_aa', 'viseme_O', 'viseme_E', 'viseme_I', 'viseme_U', 'viseme_sil'];
     let visemeIndex = 0;
     let lastTime = 0;
@@ -284,7 +345,6 @@ function startTalking() {
 }
 
 function stopTalking() {
-    isSpeaking = false;
     if (talkingAnimation) {
         cancelAnimationFrame(talkingAnimation);
     }
@@ -307,36 +367,48 @@ function animate() {
     renderer.render(scene, camera);
 }
 
-function setStatus(text) {
-    if (statusEl) statusEl.textContent = text;
-    console.log('Status:', text);
+function setStatus(type, text) {
+    statusEl.textContent = text;
+    statusEl.className = type;
 }
 
-// Event listeners
-speakBtn.addEventListener('click', () => {
-    const text = textInput.value.trim();
-    if (text) processUserInput(text);
-});
+function setSubtitle(speaker, text) {
+    subtitlesEl.textContent = text;
+    subtitlesEl.className = speaker;
+}
 
-listenBtn.addEventListener('click', () => {
-    if (isListening) {
-        stopListening();
-    } else {
-        startListening();
-    }
-});
+function startTypewriter(text, duration) {
+    stopTypewriter();
+    const words = text.split(' ');
+    let wordIndex = 0;
+    const totalDuration = (duration || (text.length * 0.06)) * 1000;
+    const interval = totalDuration / words.length;
 
-textInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        speakBtn.click();
+    subtitlesEl.textContent = '';
+
+    typewriterInterval = setInterval(() => {
+        if (wordIndex < words.length) {
+            subtitlesEl.textContent += (wordIndex > 0 ? ' ' : '') + words[wordIndex];
+            wordIndex++;
+        } else {
+            stopTypewriter();
+        }
+    }, interval);
+}
+
+function stopTypewriter() {
+    if (typewriterInterval) {
+        clearInterval(typewriterInterval);
+        typewriterInterval = null;
     }
-});
+}
 
 window.addEventListener('resize', () => {
     camera.aspect = container.clientWidth / container.clientHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(container.clientWidth, container.clientHeight);
 });
+
+startBtn.addEventListener('click', () => startConversation());
 
 init();
