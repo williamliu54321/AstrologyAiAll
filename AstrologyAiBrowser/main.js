@@ -15,6 +15,7 @@ let isListening = false;
 let recognition = null;
 let currentTranscript = '';
 let silenceTimer = null;
+let longSilenceTimer = null;
 let typewriterInterval = null;
 let conversationActive = false;
 
@@ -99,23 +100,26 @@ function setupSpeechRecognition() {
         isListening = true;
         currentTranscript = '';
         setStatus('listening', 'Listening...');
+
+        // Start long silence timer - if no speech for 10s, prompt user
+        if (longSilenceTimer) clearTimeout(longSilenceTimer);
+        longSilenceTimer = setTimeout(() => {
+            if (isListening && !currentTranscript.trim()) {
+                stopListening();
+                promptUser();
+            }
+        }, 10000);
     };
 
     recognition.onresult = (event) => {
-        // Clear silence timer on new speech
-        if (silenceTimer) {
-            clearTimeout(silenceTimer);
-            silenceTimer = null;
-        }
+        // Clear timers on new speech
+        if (silenceTimer) clearTimeout(silenceTimer);
+        if (longSilenceTimer) clearTimeout(longSilenceTimer);
 
         let transcript = '';
-        let isFinal = false;
 
         for (let i = 0; i < event.results.length; i++) {
             transcript += event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-                isFinal = true;
-            }
         }
 
         currentTranscript = transcript;
@@ -123,7 +127,7 @@ function setupSpeechRecognition() {
 
         // Start silence timer - if no new speech for 2.5s, process
         silenceTimer = setTimeout(() => {
-            if (currentTranscript.trim() && isListening) {
+            if (currentTranscript.trim().length > 3 && isListening) {
                 stopListening();
                 processUserInput(currentTranscript);
             }
@@ -132,17 +136,17 @@ function setupSpeechRecognition() {
 
     recognition.onerror = (event) => {
         console.error('Speech recognition error:', event.error);
-        if (event.error === 'no-speech' && conversationActive) {
-            // Restart listening if no speech detected
-            setTimeout(startListening, 500);
+        // Don't auto-restart on no-speech - wait for user
+        if (event.error === 'no-speech') {
+            setStatus('ready', 'Say something...');
         }
     };
 
     recognition.onend = () => {
         isListening = false;
-        // Auto-restart if conversation is active and we're not speaking
-        if (conversationActive && !isSpeaking) {
-            setTimeout(startListening, 300);
+        // Only auto-restart if we didn't get any input
+        if (conversationActive && !isSpeaking && !currentTranscript.trim()) {
+            setTimeout(startListening, 1000);
         }
     };
 }
@@ -193,18 +197,56 @@ function startListening() {
 }
 
 function stopListening() {
-    if (silenceTimer) {
-        clearTimeout(silenceTimer);
-        silenceTimer = null;
-    }
+    if (silenceTimer) clearTimeout(silenceTimer);
+    if (longSilenceTimer) clearTimeout(longSilenceTimer);
+    silenceTimer = null;
+    longSilenceTimer = null;
     isListening = false;
     if (recognition) {
         try { recognition.stop(); } catch (e) {}
     }
 }
 
+async function promptUser() {
+    // AI asks a follow-up question when user is silent too long
+    setStatus('thinking', 'Thinking...');
+
+    conversationHistory.push({
+        role: 'user',
+        content: '(The user is silent. Ask them an engaging follow-up question to continue the conversation.)'
+    });
+
+    try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+                model: 'gpt-4o-mini',
+                messages: conversationHistory,
+                max_tokens: 60
+            })
+        });
+
+        const data = await response.json();
+        if (data.error) throw new Error(data.error.message);
+
+        const promptMessage = data.choices[0].message.content;
+        conversationHistory.push({ role: 'assistant', content: promptMessage });
+
+        await speakWithOpenAI(promptMessage);
+    } catch (error) {
+        console.error('Error:', error);
+        setStatus('error', 'Error: ' + error.message);
+        setTimeout(startListening, 2000);
+    }
+}
+
 async function processUserInput(userText) {
-    if (!userText.trim()) {
+    // Ignore if too short (probably noise)
+    if (!userText.trim() || userText.trim().length < 3) {
         startListening();
         return;
     }
