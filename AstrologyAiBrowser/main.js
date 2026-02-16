@@ -11,6 +11,8 @@ const startBtn = document.getElementById('start-btn');
 let scene, camera, renderer, avatar;
 let morphTargetMeshes = [];
 let isSpeaking = false;
+let audioContext = null;
+let analyser = null;
 let isListening = false;
 let recognition = null;
 let currentTranscript = '';
@@ -307,31 +309,39 @@ async function speakWithOpenAI(text) {
 
         const audioBlob = await response.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
-        const audio = new Audio(audioUrl);
 
-        audio.onplay = () => {
-            startTalking();
-            startTypewriter(text, audio.duration);
-        };
+        // Set up audio context for amplitude analysis
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
 
-        audio.onended = () => {
+        // Fetch as array buffer for Web Audio API
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+        // Create nodes
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.8;
+
+        source.connect(analyser);
+        analyser.connect(audioContext.destination);
+
+        source.onended = () => {
             stopTalking();
             stopTypewriter();
             subtitlesEl.textContent = text;
             isSpeaking = false;
-            URL.revokeObjectURL(audioUrl);
-            // Auto-start listening after AI finishes
             setTimeout(startListening, 500);
         };
 
-        audio.onerror = () => {
-            stopTalking();
-            isSpeaking = false;
-            setStatus('error', 'Audio error');
-            setTimeout(startListening, 1000);
-        };
+        source.start();
+        startTalking();
+        startTypewriter(text, audioBuffer.duration);
 
-        audio.play();
     } catch (error) {
         console.error('TTS Error:', error);
         stopTalking();
@@ -353,31 +363,50 @@ function setMorphTarget(name, value) {
 let talkingAnimation = null;
 
 function startTalking() {
-    const talkingVisemes = ['viseme_aa', 'viseme_O', 'viseme_E', 'viseme_I', 'viseme_U', 'viseme_sil'];
-    let visemeIndex = 0;
-    let lastTime = 0;
-    const speed = 100;
+    const dataArray = new Uint8Array(analyser ? analyser.frequencyBinCount : 128);
 
     function animateMouth(time) {
         if (!isSpeaking) {
-            talkingVisemes.forEach(v => setMorphTarget(v, 0));
             setMorphTarget('mouthOpen', 0);
+            setMorphTarget('viseme_aa', 0);
+            setMorphTarget('viseme_O', 0);
+            setMorphTarget('viseme_E', 0);
             return;
         }
 
-        if (time - lastTime > speed) {
-            talkingVisemes.forEach(v => setMorphTarget(v, 0));
-            const currentViseme = talkingVisemes[visemeIndex];
-            const intensity = 0.3 + Math.random() * 0.5;
-            setMorphTarget(currentViseme, intensity);
-            setMorphTarget('mouthOpen', intensity * 0.7);
-            visemeIndex = (visemeIndex + 1) % talkingVisemes.length;
-            lastTime = time;
+        // Get audio amplitude
+        let volume = 0;
+        if (analyser) {
+            analyser.getByteFrequencyData(dataArray);
+            // Average the frequency data
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                sum += dataArray[i];
+            }
+            volume = sum / dataArray.length / 255; // Normalize to 0-1
         }
 
+        // Apply to mouth - amplify the effect
+        const mouthOpen = Math.min(volume * 2.5, 1);
+        setMorphTarget('mouthOpen', mouthOpen * 0.8);
+
+        // Add some variation with different visemes based on volume
+        if (mouthOpen > 0.5) {
+            setMorphTarget('viseme_aa', mouthOpen * 0.6);
+            setMorphTarget('viseme_O', 0);
+        } else if (mouthOpen > 0.2) {
+            setMorphTarget('viseme_aa', 0);
+            setMorphTarget('viseme_O', mouthOpen * 0.8);
+        } else {
+            setMorphTarget('viseme_aa', 0);
+            setMorphTarget('viseme_O', 0);
+            setMorphTarget('viseme_E', mouthOpen * 0.5);
+        }
+
+        // Subtle head movement
         if (avatar) {
-            avatar.rotation.y = Math.sin(time * 0.002) * 0.08;
-            avatar.rotation.x = Math.sin(time * 0.003) * 0.03;
+            avatar.rotation.y = Math.sin(time * 0.002) * 0.06;
+            avatar.rotation.x = Math.sin(time * 0.003) * 0.02;
         }
 
         talkingAnimation = requestAnimationFrame(animateMouth);
